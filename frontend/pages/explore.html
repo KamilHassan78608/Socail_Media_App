@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Explore — Nexus</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar-left">
+      <div class="logo">
+        <div class="logo-icon">✦</div>
+        <span class="logo-text">Nexus</span>
+      </div>
+      <a href="/frontend/index.html" class="nav-item">
+        <span class="nav-icon">🏠</span><span>Home</span>
+      </a>
+      <a href="/frontend/pages/explore.html" class="nav-item active">
+        <span class="nav-icon">🔍</span><span>Explore</span>
+      </a>
+      <a href="#" class="nav-item" id="profile-link">
+        <span class="nav-icon">👤</span><span>Profile</span>
+      </a>
+      <div class="nav-user" id="nav-user"></div>
+      <button id="logout-btn" class="nav-item" style="width:100%;text-align:left;color:var(--text-muted)">
+        <span class="nav-icon">🚪</span><span>Logout</span>
+      </button>
+    </aside>
+
+    <main class="main-content">
+      <div class="feed-header">
+        <h2>Explore</h2>
+        <div style="padding:16px 0 0;display:flex;gap:10px">
+          <div class="search-box" style="flex:1;margin:0">
+            <span>🔍</span>
+            <input type="text" placeholder="Search people…" id="search-input" oninput="searchUsers()" />
+          </div>
+        </div>
+      </div>
+
+      <div id="search-results" style="display:none;padding:16px 20px">
+        <h3 style="margin-bottom:12px;font-size:15px;color:var(--text-muted)">People</h3>
+        <div id="search-list"></div>
+        <div style="height:1px;background:var(--border);margin:20px 0"></div>
+      </div>
+
+      <div id="posts-container">
+        <div class="loader"><div class="spinner"></div>Loading posts…</div>
+      </div>
+    </main>
+
+    <aside class="sidebar-right">
+      <div class="sidebar-section">
+        <h3>Who to Follow</h3>
+        <div id="suggestions-list"><div class="loader"><div class="spinner"></div></div></div>
+      </div>
+    </aside>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('not logged in');
+    const currentUser = getUser();
+    document.getElementById('profile-link').href = `/frontend/pages/profile.html?u=${currentUser.username}`;
+    populateNavUser();
+
+    let searchTimeout;
+
+    async function loadExplorePosts() {
+      try {
+        const data = await apiFetch('/posts/explore');
+        renderPosts(data.posts);
+      } catch (err) {
+        document.getElementById('posts-container').innerHTML =
+          `<div class="empty-state"><div class="emoji">⚠️</div><h3>Error</h3><p>${err.message}</p></div>`;
+      }
+    }
+
+    function renderPosts(posts) {
+      const container = document.getElementById('posts-container');
+      if (!posts.length) {
+        container.innerHTML = `<div class="empty-state"><div class="emoji">🌐</div><h3>No posts yet</h3><p>Be the first to post something!</p></div>`;
+        return;
+      }
+      container.innerHTML = posts.map(post => {
+        const isLiked = post.likes?.includes(currentUser._id);
+        const isOwn = post.author?._id === currentUser._id;
+        const img = post.image ? `<div class="post-image"><img src="http://localhost:5000${post.image}" alt="post" loading="lazy"></div>` : '';
+        return `
+          <div class="post-card" id="post-${post._id}">
+            <div class="post-top">
+              <a href="/frontend/pages/profile.html?u=${post.author?.username}">${getAvatarHTML(post.author, 'sm')}</a>
+              <div class="post-body">
+                <div class="post-meta">
+                  <a href="/frontend/pages/profile.html?u=${post.author?.username}" class="post-name">${post.author?.fullName || post.author?.username}</a>
+                  <span class="post-handle">@${post.author?.username}</span>
+                  <span class="post-time">· ${timeAgo(post.createdAt)}</span>
+                </div>
+                <div class="post-content">${(post.content||'').replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>
+                ${img}
+                <div class="post-actions">
+                  <button class="post-action comment-btn" onclick="toggleComments('${post._id}')">💬 ${post.commentsCount||0}</button>
+                  <button class="post-action like-btn ${isLiked?'liked':''}" onclick="likePost('${post._id}',this)">${isLiked?'❤️':'🤍'} <span>${post.likes?.length||0}</span></button>
+                  ${isOwn?`<button class="post-action delete-btn" onclick="deletePost('${post._id}')">🗑</button>`:''}
+                </div>
+                <div class="comments-section" id="comments-${post._id}" style="display:none"></div>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    async function likePost(postId, btn) {
+      try {
+        const data = await apiFetch(`/posts/${postId}/like`, { method: 'PUT' });
+        btn.className = `post-action like-btn ${data.liked?'liked':''}`;
+        btn.innerHTML = `${data.liked?'❤️':'🤍'} <span>${data.likesCount}</span>`;
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function deletePost(postId) {
+      if (!confirm('Delete?')) return;
+      try {
+        await apiFetch(`/posts/${postId}`, { method: 'DELETE' });
+        document.getElementById(`post-${postId}`)?.remove();
+        showToast('Deleted', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function toggleComments(postId) {
+      const section = document.getElementById(`comments-${postId}`);
+      if (section.style.display === 'block') { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+      section.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`);
+        const list = data.comments.map(c => `
+          <div class="comment-card" id="comment-${c._id}">
+            ${getAvatarHTML(c.author,'sm')}
+            <div class="comment-body">
+              <div class="comment-meta">
+                <a href="/frontend/pages/profile.html?u=${c.author?.username}" class="comment-name">${c.author?.username}</a>
+                <span class="comment-time">${timeAgo(c.createdAt)}</span>
+                ${c.author?._id===currentUser._id?`<span class="comment-delete" onclick="delComment('${c._id}')">Delete</span>`:''}
+              </div>
+              <div class="comment-text">${(c.text||'').replace(/</g,'&lt;')}</div>
+            </div>
+          </div>`).join('') || '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">No comments yet</p>';
+
+        section.innerHTML = `
+          <div class="comment-compose">
+            ${getAvatarHTML(currentUser,'sm')}
+            <input class="comment-input" id="cinput-${postId}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')addComment('${postId}')">
+            <button class="btn btn-primary btn-sm" onclick="addComment('${postId}')">Send</button>
+          </div>
+          <div id="clist-${postId}">${list}</div>`;
+      } catch (err) { section.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+    }
+
+    async function addComment(postId) {
+      const input = document.getElementById(`cinput-${postId}`);
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text }) });
+        input.value = '';
+        const c = data.comment;
+        document.getElementById(`clist-${postId}`).insertAdjacentHTML('afterbegin', `
+          <div class="comment-card" id="comment-${c._id}">
+            ${getAvatarHTML(c.author,'sm')}
+            <div class="comment-body">
+              <div class="comment-meta">
+                <span class="comment-name">${c.author?.username}</span>
+                <span class="comment-time">just now</span>
+                <span class="comment-delete" onclick="delComment('${c._id}')">Delete</span>
+              </div>
+              <div class="comment-text">${(c.text||'').replace(/</g,'&lt;')}</div>
+            </div>
+          </div>`);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function delComment(id) {
+      try {
+        await apiFetch(`/comments/${id}`, { method: 'DELETE' });
+        document.getElementById(`comment-${id}`)?.remove();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    function searchUsers() {
+      clearTimeout(searchTimeout);
+      const q = document.getElementById('search-input').value.trim();
+      if (!q) { document.getElementById('search-results').style.display = 'none'; return; }
+      searchTimeout = setTimeout(async () => {
+        try {
+          const data = await apiFetch(`/users/search?q=${encodeURIComponent(q)}`);
+          const resultsEl = document.getElementById('search-results');
+          resultsEl.style.display = 'block';
+          document.getElementById('search-list').innerHTML = data.users.length
+            ? data.users.map(u => `
+              <div class="suggestion-item">
+                <a href="/frontend/pages/profile.html?u=${u.username}">${getAvatarHTML(u,'sm')}</a>
+                <div class="suggestion-info">
+                  <a href="/frontend/pages/profile.html?u=${u.username}" class="suggestion-name">${u.fullName||u.username}</a>
+                  <div class="suggestion-handle">@${u.username} · ${u.followers?.length||0} followers</div>
+                </div>
+                <button class="suggestion-follow" onclick="quickFollow('${u._id}',this)">Follow</button>
+              </div>`).join('')
+            : '<p style="color:var(--text-muted);font-size:13px">No users found</p>';
+        } catch {}
+      }, 400);
+    }
+
+    async function quickFollow(userId, btn) {
+      try {
+        const data = await apiFetch(`/users/${userId}/follow`, { method: 'POST' });
+        btn.textContent = data.following ? 'Following' : 'Follow';
+        btn.classList.toggle('following', data.following);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function loadSuggestions() {
+      try {
+        const data = await apiFetch('/users/suggestions');
+        document.getElementById('suggestions-list').innerHTML = data.users.length
+          ? data.users.map(u => `
+            <div class="suggestion-item">
+              <a href="/frontend/pages/profile.html?u=${u.username}">${getAvatarHTML(u,'sm')}</a>
+              <div class="suggestion-info">
+                <a href="/frontend/pages/profile.html?u=${u.username}" class="suggestion-name">${u.fullName||u.username}</a>
+                <div class="suggestion-handle">@${u.username}</div>
+              </div>
+              <button class="suggestion-follow" onclick="quickFollow('${u._id}',this)">Follow</button>
+            </div>`).join('')
+          : '<p style="color:var(--text-muted);font-size:13px">No suggestions</p>';
+      } catch {}
+    }
+
+    loadExplorePosts();
+    loadSuggestions();
+  </script>
+</body>
+</html>

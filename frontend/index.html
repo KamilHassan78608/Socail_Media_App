@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Home — Nexus</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar-left">
+      <div class="logo">
+        <div class="logo-icon">✦</div>
+        <span class="logo-text">Nexus</span>
+      </div>
+
+      <a href="/frontend/index.html" class="nav-item active">
+        <span class="nav-icon">🏠</span><span>Home</span>
+      </a>
+      <a href="/frontend/pages/explore.html" class="nav-item">
+        <span class="nav-icon">🔍</span><span>Explore</span>
+      </a>
+      <a href="#" class="nav-item" id="profile-link">
+        <span class="nav-icon">👤</span><span>Profile</span>
+      </a>
+
+      <button class="btn-post-nav" onclick="openPostModal()">
+        <span>✦</span><span>Post</span>
+      </button>
+
+      <div class="nav-user" id="nav-user"></div>
+      <button id="logout-btn" class="nav-item" style="width:100%;text-align:left;color:var(--text-muted)">
+        <span class="nav-icon">🚪</span><span>Logout</span>
+      </button>
+    </aside>
+
+    <!-- MAIN FEED -->
+    <main class="main-content">
+      <div class="feed-header">
+        <h2>Home</h2>
+        <div class="feed-tabs">
+          <button class="feed-tab active" id="tab-feed" onclick="loadFeed('feed')">For You</button>
+          <button class="feed-tab" id="tab-explore" onclick="loadFeed('explore')">Explore</button>
+        </div>
+      </div>
+
+      <!-- COMPOSE -->
+      <div class="compose-box">
+        <div id="compose-avatar"></div>
+        <div class="compose-right">
+          <textarea
+            class="compose-input"
+            id="compose-text"
+            placeholder="What's on your mind?"
+            maxlength="1000"
+            oninput="updateCharCount()"
+            rows="2"
+          ></textarea>
+          <div class="image-preview" id="image-preview">
+            <img id="preview-img" src="" alt="">
+            <div class="image-preview-remove" onclick="removeImage()">✕</div>
+          </div>
+          <div class="compose-actions">
+            <div class="compose-tools">
+              <label class="compose-tool" title="Add image">
+                🖼
+                <input type="file" id="post-image" accept="image/*" style="display:none" onchange="previewImage(this)">
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <span class="char-count" id="char-count">1000</span>
+              <button class="btn btn-primary btn-sm" onclick="submitPost()">Post</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- POSTS -->
+      <div id="posts-container">
+        <div class="loader"><div class="spinner"></div>Loading your feed…</div>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside class="sidebar-right">
+      <div class="search-box">
+        <span>🔍</span>
+        <input type="text" placeholder="Search people…" id="search-input" oninput="searchUsers()" />
+      </div>
+      <div id="search-results" style="display:none" class="sidebar-section">
+        <h3>Results</h3>
+        <div id="search-list"></div>
+      </div>
+      <div class="sidebar-section" id="suggestions-box">
+        <h3>Who to Follow</h3>
+        <div id="suggestions-list"><div class="loader"><div class="spinner"></div></div></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- POST MODAL -->
+  <div class="modal-overlay" id="post-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Create Post</h3>
+        <button class="modal-close" onclick="closePostModal()">✕</button>
+      </div>
+      <div style="display:flex;gap:12px">
+        <div id="modal-avatar"></div>
+        <div style="flex:1">
+          <textarea
+            class="compose-input"
+            id="modal-text"
+            placeholder="What's on your mind?"
+            maxlength="1000"
+            rows="4"
+            style="font-size:16px"
+          ></textarea>
+          <div class="image-preview" id="modal-image-preview">
+            <img id="modal-preview-img" src="" alt="">
+            <div class="image-preview-remove" onclick="removeModalImage()">✕</div>
+          </div>
+          <div class="compose-actions" style="margin-top:12px">
+            <label class="compose-tool">🖼
+              <input type="file" id="modal-post-image" accept="image/*" style="display:none" onchange="previewModalImage(this)">
+            </label>
+            <button class="btn btn-primary" onclick="submitModalPost()">Publish Post</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('not logged in');
+    const currentUser = getUser();
+
+    // Set profile link
+    document.getElementById('profile-link').href = `/frontend/pages/profile.html?u=${currentUser.username}`;
+    populateNavUser();
+
+    // Set compose avatars
+    document.getElementById('compose-avatar').innerHTML = getAvatarHTML(currentUser, 'sm');
+    document.getElementById('modal-avatar').innerHTML = getAvatarHTML(currentUser);
+
+    let currentTab = 'feed';
+    let searchTimeout;
+
+    // ===== FEED =====
+    async function loadFeed(type = 'feed') {
+      currentTab = type;
+      document.getElementById('tab-feed').classList.toggle('active', type === 'feed');
+      document.getElementById('tab-explore').classList.toggle('active', type === 'explore');
+      document.getElementById('posts-container').innerHTML = '<div class="loader"><div class="spinner"></div>Loading…</div>';
+
+      try {
+        const endpoint = type === 'feed' ? '/posts/feed' : '/posts/explore';
+        const data = await apiFetch(endpoint);
+        renderPosts(data.posts);
+      } catch (err) {
+        document.getElementById('posts-container').innerHTML =
+          `<div class="empty-state"><div class="emoji">⚠️</div><h3>Couldn't load posts</h3><p>${err.message}</p></div>`;
+      }
+    }
+
+    function renderPosts(posts) {
+      const container = document.getElementById('posts-container');
+      if (!posts.length) {
+        container.innerHTML = `<div class="empty-state">
+          <div class="emoji">✨</div>
+          <h3>Nothing here yet</h3>
+          <p>Follow people or create a post to get started</p>
+          <button class="btn btn-primary" onclick="loadFeed('explore')">Explore Posts</button>
+        </div>`;
+        return;
+      }
+
+      container.innerHTML = posts.map(post => renderPostCard(post)).join('');
+    }
+
+    function renderPostCard(post) {
+      const isLiked = post.likes?.includes(currentUser._id);
+      const isOwn = post.author?._id === currentUser._id;
+      const img = post.image ? `<div class="post-image"><img src="http://localhost:5000${post.image}" alt="post image" loading="lazy"></div>` : '';
+
+      return `
+        <div class="post-card" id="post-${post._id}">
+          <div class="post-top">
+            <a href="/frontend/pages/profile.html?u=${post.author?.username}">
+              ${getAvatarHTML(post.author, 'sm')}
+            </a>
+            <div class="post-body">
+              <div class="post-meta">
+                <a href="/frontend/pages/profile.html?u=${post.author?.username}" class="post-name">${post.author?.fullName || post.author?.username}</a>
+                <span class="post-handle">@${post.author?.username}</span>
+                <span class="post-time">· ${timeAgo(post.createdAt)}</span>
+              </div>
+              <div class="post-content">${escapeHtml(post.content)}</div>
+              ${img}
+              <div class="post-actions">
+                <button class="post-action comment-btn" onclick="toggleComments('${post._id}')">
+                  💬 <span id="cc-${post._id}">${post.commentsCount || 0}</span>
+                </button>
+                <button class="post-action like-btn ${isLiked ? 'liked' : ''}" onclick="likePost('${post._id}', this)" id="like-${post._id}">
+                  ${isLiked ? '❤️' : '🤍'} <span id="lc-${post._id}">${post.likes?.length || 0}</span>
+                </button>
+                ${isOwn ? `<button class="post-action delete-btn" onclick="deletePost('${post._id}')">🗑</button>` : ''}
+              </div>
+              <div class="comments-section" id="comments-${post._id}" style="display:none"></div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ===== LIKE =====
+    async function likePost(postId, btn) {
+      try {
+        const data = await apiFetch(`/posts/${postId}/like`, { method: 'PUT' });
+        btn.className = `post-action like-btn ${data.liked ? 'liked' : ''}`;
+        btn.innerHTML = `${data.liked ? '❤️' : '🤍'} <span id="lc-${postId}">${data.likesCount}</span>`;
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== DELETE POST =====
+    async function deletePost(postId) {
+      if (!confirm('Delete this post?')) return;
+      try {
+        await apiFetch(`/posts/${postId}`, { method: 'DELETE' });
+        document.getElementById(`post-${postId}`)?.remove();
+        showToast('Post deleted', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== COMMENTS =====
+    async function toggleComments(postId) {
+      const section = document.getElementById(`comments-${postId}`);
+      if (section.style.display === 'block') { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+      section.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`);
+        section.innerHTML = renderCommentsSection(postId, data.comments);
+      } catch (err) { section.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+    }
+
+    function renderCommentsSection(postId, comments) {
+      const commentList = comments.map(c => `
+        <div class="comment-card" id="comment-${c._id}">
+          <a href="/frontend/pages/profile.html?u=${c.author?.username}">${getAvatarHTML(c.author, 'sm')}</a>
+          <div class="comment-body">
+            <div class="comment-meta">
+              <a href="/frontend/pages/profile.html?u=${c.author?.username}" class="comment-name">${c.author?.username}</a>
+              <span class="comment-time">${timeAgo(c.createdAt)}</span>
+              ${c.author?._id === currentUser._id ? `<span class="comment-delete" onclick="deleteComment('${c._id}','${postId}')">Delete</span>` : ''}
+            </div>
+            <div class="comment-text">${escapeHtml(c.text)}</div>
+          </div>
+        </div>
+      `).join('') || '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">No comments yet. Be the first!</p>';
+
+      return `
+        <div class="comment-compose">
+          ${getAvatarHTML(currentUser, 'sm')}
+          <input class="comment-input" id="cinput-${postId}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')submitComment('${postId}')">
+          <button class="btn btn-primary btn-sm" onclick="submitComment('${postId}')">Send</button>
+        </div>
+        <div id="clist-${postId}">${commentList}</div>
+      `;
+    }
+
+    async function submitComment(postId) {
+      const input = document.getElementById(`cinput-${postId}`);
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`, {
+          method: 'POST',
+          body: JSON.stringify({ text })
+        });
+        input.value = '';
+        // Update count
+        const countEl = document.getElementById(`cc-${postId}`);
+        if (countEl) countEl.textContent = parseInt(countEl.textContent || 0) + 1;
+        // Add comment to top
+        const list = document.getElementById(`clist-${postId}`);
+        const c = data.comment;
+        const newComment = `
+          <div class="comment-card" id="comment-${c._id}">
+            <a href="/frontend/pages/profile.html?u=${c.author?.username}">${getAvatarHTML(c.author, 'sm')}</a>
+            <div class="comment-body">
+              <div class="comment-meta">
+                <a href="/frontend/pages/profile.html?u=${c.author?.username}" class="comment-name">${c.author?.username}</a>
+                <span class="comment-time">just now</span>
+                <span class="comment-delete" onclick="deleteComment('${c._id}','${postId}')">Delete</span>
+              </div>
+              <div class="comment-text">${escapeHtml(c.text)}</div>
+            </div>
+          </div>`;
+        list.insertAdjacentHTML('afterbegin', newComment);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function deleteComment(commentId, postId) {
+      try {
+        await apiFetch(`/comments/${commentId}`, { method: 'DELETE' });
+        document.getElementById(`comment-${commentId}`)?.remove();
+        const countEl = document.getElementById(`cc-${postId}`);
+        if (countEl) countEl.textContent = Math.max(0, parseInt(countEl.textContent) - 1);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== COMPOSE POST =====
+    function updateCharCount() {
+      const text = document.getElementById('compose-text').value;
+      const el = document.getElementById('char-count');
+      const remaining = 1000 - text.length;
+      el.textContent = remaining;
+      el.className = `char-count ${remaining < 50 ? 'danger' : remaining < 150 ? 'warning' : ''}`;
+    }
+
+    function previewImage(input) {
+      if (!input.files?.[0]) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        document.getElementById('preview-img').src = e.target.result;
+        document.getElementById('image-preview').style.display = 'block';
+      };
+      reader.readAsDataURL(input.files[0]);
+    }
+
+    function removeImage() {
+      document.getElementById('post-image').value = '';
+      document.getElementById('image-preview').style.display = 'none';
+    }
+
+    async function submitPost() {
+      const content = document.getElementById('compose-text').value.trim();
+      if (!content) return showToast('Write something first!', 'error');
+
+      const formData = new FormData();
+      formData.append('content', content);
+      const imageFile = document.getElementById('post-image').files[0];
+      if (imageFile) formData.append('image', imageFile);
+
+      try {
+        const data = await apiFetch('/posts', { method: 'POST', body: formData });
+        document.getElementById('compose-text').value = '';
+        removeImage();
+        // Prepend to feed
+        const container = document.getElementById('posts-container');
+        const emptyState = container.querySelector('.empty-state');
+        if (emptyState) container.innerHTML = '';
+        container.insertAdjacentHTML('afterbegin', renderPostCard(data.post));
+        showToast('Post published!', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== MODAL POST =====
+    function openPostModal() {
+      document.getElementById('post-modal').classList.add('open');
+      document.getElementById('modal-text').focus();
+    }
+    function closePostModal() { document.getElementById('post-modal').classList.remove('open'); }
+
+    function previewModalImage(input) {
+      if (!input.files?.[0]) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        document.getElementById('modal-preview-img').src = e.target.result;
+        document.getElementById('modal-image-preview').style.display = 'block';
+      };
+      reader.readAsDataURL(input.files[0]);
+    }
+    function removeModalImage() {
+      document.getElementById('modal-post-image').value = '';
+      document.getElementById('modal-image-preview').style.display = 'none';
+    }
+
+    async function submitModalPost() {
+      const content = document.getElementById('modal-text').value.trim();
+      if (!content) return showToast('Write something first!', 'error');
+
+      const formData = new FormData();
+      formData.append('content', content);
+      const imageFile = document.getElementById('modal-post-image').files[0];
+      if (imageFile) formData.append('image', imageFile);
+
+      try {
+        const data = await apiFetch('/posts', { method: 'POST', body: formData });
+        closePostModal();
+        document.getElementById('modal-text').value = '';
+        removeModalImage();
+        const container = document.getElementById('posts-container');
+        const emptyState = container.querySelector('.empty-state');
+        if (emptyState) container.innerHTML = '';
+        container.insertAdjacentHTML('afterbegin', renderPostCard(data.post));
+        showToast('Post published!', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== SEARCH =====
+    function searchUsers() {
+      clearTimeout(searchTimeout);
+      const q = document.getElementById('search-input').value.trim();
+      const resultsBox = document.getElementById('search-results');
+      if (!q) { resultsBox.style.display = 'none'; return; }
+      searchTimeout = setTimeout(async () => {
+        try {
+          const data = await apiFetch(`/users/search?q=${encodeURIComponent(q)}`);
+          resultsBox.style.display = 'block';
+          document.getElementById('search-list').innerHTML = data.users.length
+            ? data.users.map(u => suggestionItem(u)).join('')
+            : '<p style="color:var(--text-muted);font-size:13px">No users found</p>';
+        } catch {}
+      }, 400);
+    }
+
+    function suggestionItem(u) {
+      return `
+        <div class="suggestion-item">
+          <a href="/frontend/pages/profile.html?u=${u.username}">${getAvatarHTML(u, 'sm')}</a>
+          <div class="suggestion-info">
+            <a href="/frontend/pages/profile.html?u=${u.username}" class="suggestion-name">${u.fullName || u.username}</a>
+            <div class="suggestion-handle">@${u.username}</div>
+          </div>
+          <button class="suggestion-follow" id="sf-${u._id}" onclick="followToggle('${u._id}', this)">Follow</button>
+        </div>`;
+    }
+
+    async function loadSuggestions() {
+      try {
+        const data = await apiFetch('/users/suggestions');
+        document.getElementById('suggestions-list').innerHTML = data.users.length
+          ? data.users.map(u => suggestionItem(u)).join('')
+          : '<p style="color:var(--text-muted);font-size:13px">No suggestions right now</p>';
+      } catch {}
+    }
+
+    async function followToggle(userId, btn) {
+      try {
+        const data = await apiFetch(`/users/${userId}/follow`, { method: 'POST' });
+        if (data.following) {
+          btn.textContent = 'Following';
+          btn.classList.add('following');
+        } else {
+          btn.textContent = 'Follow';
+          btn.classList.remove('following');
+        }
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // Close modal on overlay click
+    document.getElementById('post-modal').addEventListener('click', function(e) {
+      if (e.target === this) closePostModal();
+    });
+
+    // Init
+    loadFeed('feed');
+    loadSuggestions();
+  </script>
+</body>
+</html>

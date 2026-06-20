@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Profile — Nexus</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="app-layout">
+
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar-left">
+      <div class="logo">
+        <div class="logo-icon">✦</div>
+        <span class="logo-text">Nexus</span>
+      </div>
+      <a href="/frontend/index.html" class="nav-item">
+        <span class="nav-icon">🏠</span><span>Home</span>
+      </a>
+      <a href="/frontend/pages/explore.html" class="nav-item">
+        <span class="nav-icon">🔍</span><span>Explore</span>
+      </a>
+      <a href="#" class="nav-item active" id="profile-link">
+        <span class="nav-icon">👤</span><span>Profile</span>
+      </a>
+      <div class="nav-user" id="nav-user"></div>
+      <button id="logout-btn" class="nav-item" style="width:100%;text-align:left;color:var(--text-muted)">
+        <span class="nav-icon">🚪</span><span>Logout</span>
+      </button>
+    </aside>
+
+    <!-- PROFILE MAIN -->
+    <main class="main-content">
+      <div id="profile-container">
+        <div class="loader"><div class="spinner"></div>Loading profile…</div>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR -->
+    <aside class="sidebar-right">
+      <div class="sidebar-section" id="suggestions-box">
+        <h3>Who to Follow</h3>
+        <div id="suggestions-list"><div class="loader"><div class="spinner"></div></div></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- EDIT PROFILE MODAL -->
+  <div class="modal-overlay" id="edit-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Edit Profile</h3>
+        <button class="modal-close" onclick="closeEditModal()">✕</button>
+      </div>
+      <div class="form-group">
+        <label>Avatar</label>
+        <input type="file" id="edit-avatar" accept="image/*" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>Full Name</label>
+        <input type="text" id="edit-fullname" class="form-control" placeholder="Your Name">
+      </div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="edit-username" class="form-control" placeholder="username">
+      </div>
+      <div class="form-group">
+        <label>Bio</label>
+        <textarea id="edit-bio" class="form-control" rows="3" placeholder="Tell the world about yourself…" maxlength="200"></textarea>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="saveProfile()">Save Changes</button>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!requireAuth()) throw new Error('not logged in');
+    const currentUser = getUser();
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetUsername = urlParams.get('u') || currentUser.username;
+    const isOwnProfile = targetUsername === currentUser.username;
+
+    document.getElementById('profile-link').href = `/frontend/pages/profile.html?u=${currentUser.username}`;
+    populateNavUser();
+
+    async function loadProfile() {
+      try {
+        const data = await apiFetch(`/users/${targetUsername}`);
+        renderProfile(data);
+      } catch (err) {
+        document.getElementById('profile-container').innerHTML =
+          `<div class="empty-state"><div class="emoji">😕</div><h3>User not found</h3><p>${err.message}</p></div>`;
+      }
+    }
+
+    function renderProfile(data) {
+      const { user, posts, postsCount } = data;
+      const isFollowing = user.followers?.some(f => (f._id || f) === currentUser._id);
+
+      const followBtn = isOwnProfile
+        ? `<button class="btn btn-outline btn-sm" onclick="openEditModal()">Edit Profile</button>`
+        : `<button class="btn ${isFollowing ? 'btn-outline' : 'btn-primary'} btn-sm" id="follow-btn" onclick="toggleFollow('${user._id}')">
+            ${isFollowing ? 'Following' : 'Follow'}
+           </button>`;
+
+      const postsHTML = posts.length
+        ? posts.map(post => renderPostCard(post, user)).join('')
+        : `<div class="empty-state"><div class="emoji">📝</div><h3>No posts yet</h3><p>${isOwnProfile ? 'Share your first post!' : `${user.username} hasn't posted yet`}</p></div>`;
+
+      document.getElementById('profile-container').innerHTML = `
+        <div class="profile-header-banner"></div>
+        <div class="profile-header-info">
+          <div class="profile-top-actions">${followBtn}</div>
+          <div class="profile-avatar-wrap">
+            ${getAvatarHTML(user, 'xl')}
+          </div>
+          <div class="profile-name">${user.fullName || user.username}</div>
+          <div class="profile-handle">@${user.username}</div>
+          ${user.bio ? `<div class="profile-bio">${escapeHtml(user.bio)}</div>` : ''}
+          <div class="profile-stats">
+            <div class="profile-stat"><span class="stat-num">${postsCount}</span><span class="stat-label">Posts</span></div>
+            <div class="profile-stat"><span class="stat-num" id="followers-count">${user.followers?.length || 0}</span><span class="stat-label">Followers</span></div>
+            <div class="profile-stat"><span class="stat-num">${user.following?.length || 0}</span><span class="stat-label">Following</span></div>
+          </div>
+        </div>
+        <div id="profile-posts">${postsHTML}</div>
+      `;
+
+      // Store for edit modal
+      window._profileUser = user;
+    }
+
+    function renderPostCard(post, author) {
+      const isLiked = post.likes?.includes(currentUser._id);
+      const isOwn = author._id === currentUser._id || post.author?._id === currentUser._id;
+      const img = post.image ? `<div class="post-image"><img src="http://localhost:5000${post.image}" alt="post" loading="lazy"></div>` : '';
+
+      return `
+        <div class="post-card" id="post-${post._id}">
+          <div class="post-top">
+            ${getAvatarHTML(author, 'sm')}
+            <div class="post-body">
+              <div class="post-meta">
+                <span class="post-name">${author.fullName || author.username}</span>
+                <span class="post-handle">@${author.username}</span>
+                <span class="post-time">· ${timeAgo(post.createdAt)}</span>
+              </div>
+              <div class="post-content">${escapeHtml(post.content)}</div>
+              ${img}
+              <div class="post-actions">
+                <button class="post-action comment-btn" onclick="toggleComments('${post._id}', this)">
+                  💬 <span>${post.commentsCount || 0}</span>
+                </button>
+                <button class="post-action like-btn ${isLiked ? 'liked' : ''}" onclick="likePost('${post._id}', this)">
+                  ${isLiked ? '❤️' : '🤍'} <span>${post.likes?.length || 0}</span>
+                </button>
+                ${isOwn ? `<button class="post-action delete-btn" onclick="deletePost('${post._id}')">🗑</button>` : ''}
+              </div>
+              <div class="comments-section" id="comments-${post._id}" style="display:none"></div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function likePost(postId, btn) {
+      try {
+        const data = await apiFetch(`/posts/${postId}/like`, { method: 'PUT' });
+        btn.className = `post-action like-btn ${data.liked ? 'liked' : ''}`;
+        btn.innerHTML = `${data.liked ? '❤️' : '🤍'} <span>${data.likesCount}</span>`;
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function deletePost(postId) {
+      if (!confirm('Delete this post?')) return;
+      try {
+        await apiFetch(`/posts/${postId}`, { method: 'DELETE' });
+        document.getElementById(`post-${postId}`)?.remove();
+        showToast('Post deleted', 'success');
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function toggleComments(postId) {
+      const section = document.getElementById(`comments-${postId}`);
+      if (section.style.display === 'block') { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+      section.innerHTML = '<div class="loader"><div class="spinner"></div></div>';
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`);
+        section.innerHTML = renderCommentsSection(postId, data.comments);
+      } catch (err) { section.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`; }
+    }
+
+    function renderCommentsSection(postId, comments) {
+      const commentList = comments.map(c => `
+        <div class="comment-card" id="comment-${c._id}">
+          ${getAvatarHTML(c.author, 'sm')}
+          <div class="comment-body">
+            <div class="comment-meta">
+              <a href="/frontend/pages/profile.html?u=${c.author?.username}" class="comment-name">${c.author?.username}</a>
+              <span class="comment-time">${timeAgo(c.createdAt)}</span>
+              ${c.author?._id === currentUser._id ? `<span class="comment-delete" onclick="deleteComment('${c._id}','${postId}')">Delete</span>` : ''}
+            </div>
+            <div class="comment-text">${escapeHtml(c.text)}</div>
+          </div>
+        </div>
+      `).join('') || '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">No comments yet</p>';
+
+      return `
+        <div class="comment-compose">
+          ${getAvatarHTML(currentUser, 'sm')}
+          <input class="comment-input" id="cinput-${postId}" placeholder="Add a comment…" onkeydown="if(event.key==='Enter')submitComment('${postId}')">
+          <button class="btn btn-primary btn-sm" onclick="submitComment('${postId}')">Send</button>
+        </div>
+        <div id="clist-${postId}">${commentList}</div>`;
+    }
+
+    async function submitComment(postId) {
+      const input = document.getElementById(`cinput-${postId}`);
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        const data = await apiFetch(`/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify({ text }) });
+        input.value = '';
+        const list = document.getElementById(`clist-${postId}`);
+        const c = data.comment;
+        list.insertAdjacentHTML('afterbegin', `
+          <div class="comment-card" id="comment-${c._id}">
+            ${getAvatarHTML(c.author, 'sm')}
+            <div class="comment-body">
+              <div class="comment-meta">
+                <span class="comment-name">${c.author?.username}</span>
+                <span class="comment-time">just now</span>
+                <span class="comment-delete" onclick="deleteComment('${c._id}','${postId}')">Delete</span>
+              </div>
+              <div class="comment-text">${escapeHtml(c.text)}</div>
+            </div>
+          </div>`);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    async function deleteComment(commentId, postId) {
+      try {
+        await apiFetch(`/comments/${commentId}`, { method: 'DELETE' });
+        document.getElementById(`comment-${commentId}`)?.remove();
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== FOLLOW =====
+    async function toggleFollow(userId) {
+      try {
+        const data = await apiFetch(`/users/${userId}/follow`, { method: 'POST' });
+        const btn = document.getElementById('follow-btn');
+        if (data.following) {
+          btn.textContent = 'Following';
+          btn.className = 'btn btn-outline btn-sm';
+        } else {
+          btn.textContent = 'Follow';
+          btn.className = 'btn btn-primary btn-sm';
+        }
+        const fcEl = document.getElementById('followers-count');
+        if (fcEl) fcEl.textContent = parseInt(fcEl.textContent) + (data.following ? 1 : -1);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    // ===== EDIT PROFILE =====
+    function openEditModal() {
+      const u = window._profileUser;
+      if (!u) return;
+      document.getElementById('edit-fullname').value = u.fullName || '';
+      document.getElementById('edit-username').value = u.username || '';
+      document.getElementById('edit-bio').value = u.bio || '';
+      document.getElementById('edit-modal').classList.add('open');
+    }
+    function closeEditModal() { document.getElementById('edit-modal').classList.remove('open'); }
+
+    async function saveProfile() {
+      const formData = new FormData();
+      formData.append('fullName', document.getElementById('edit-fullname').value.trim());
+      formData.append('username', document.getElementById('edit-username').value.trim());
+      formData.append('bio', document.getElementById('edit-bio').value.trim());
+      const avatarFile = document.getElementById('edit-avatar').files[0];
+      if (avatarFile) formData.append('avatar', avatarFile);
+
+      try {
+        const data = await apiFetch('/users/profile', { method: 'PUT', body: formData });
+        setAuth(getToken(), { ...currentUser, ...data.user });
+        closeEditModal();
+        showToast('Profile updated!', 'success');
+        setTimeout(() => {
+          window.location.href = `/frontend/pages/profile.html?u=${data.user.username}`;
+        }, 800);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    document.getElementById('edit-modal').addEventListener('click', function(e) {
+      if (e.target === this) closeEditModal();
+    });
+
+    // ===== SUGGESTIONS =====
+    async function loadSuggestions() {
+      try {
+        const data = await apiFetch('/users/suggestions');
+        document.getElementById('suggestions-list').innerHTML = data.users.length
+          ? data.users.map(u => `
+            <div class="suggestion-item">
+              <a href="/frontend/pages/profile.html?u=${u.username}">${getAvatarHTML(u, 'sm')}</a>
+              <div class="suggestion-info">
+                <a href="/frontend/pages/profile.html?u=${u.username}" class="suggestion-name">${u.fullName || u.username}</a>
+                <div class="suggestion-handle">@${u.username}</div>
+              </div>
+              <button class="suggestion-follow" onclick="quickFollow('${u._id}',this)">Follow</button>
+            </div>`).join('')
+          : '<p style="color:var(--text-muted);font-size:13px">No suggestions</p>';
+      } catch {}
+    }
+
+    async function quickFollow(userId, btn) {
+      try {
+        const data = await apiFetch(`/users/${userId}/follow`, { method: 'POST' });
+        btn.textContent = data.following ? 'Following' : 'Follow';
+        btn.classList.toggle('following', data.following);
+      } catch (err) { showToast(err.message, 'error'); }
+    }
+
+    loadProfile();
+    loadSuggestions();
+  </script>
+</body>
+</html>
